@@ -1,6 +1,9 @@
 import { createConnection } from "./connection";
 
-let dbInstance: ReturnType<typeof createConnection> | null = null;
+/** 数据库实例类型，供 Workflow Engine 等服务层函数显式传参使用 */
+export type Db = ReturnType<typeof createConnection>;
+
+let dbInstance: Db | null = null;
 
 /**
  * 获取数据库单例。
