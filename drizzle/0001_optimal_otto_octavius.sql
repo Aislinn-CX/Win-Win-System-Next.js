@@ -1,0 +1,1 @@
+ALTER TABLE "quote_image_candidate" ADD COLUMN "source_entity_id" integer;

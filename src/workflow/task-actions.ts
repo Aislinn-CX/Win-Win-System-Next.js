@@ -1,8 +1,9 @@
 import { eq, inArray } from "drizzle-orm";
-import { task, contractItem } from "../db";
 import type { Db, TaskStatus } from "../db";
-import { todayISO, toISODate } from "./date-calculator";
+import { contractItem, task } from "../db";
 import { logChange } from "./change-logger";
+import { checkContractCompletion } from "./completion";
+import { todayISO, toISODate } from "./date-calculator";
 import { ACTIVE_TASK_STATUSES } from "./types";
 
 // ============================================================
@@ -33,7 +34,8 @@ export async function refreshTaskStatuses(db: Db) {
 
   let changed = 0;
   for (const t of active) {
-    const effective = toISODate(t.nextRemindDate) ?? toISODate(t.plannedRemindDate);
+    const effective =
+      toISODate(t.nextRemindDate) ?? toISODate(t.plannedRemindDate);
     if (!effective) continue;
 
     let nextStatus: TaskStatus | null = null;
@@ -46,7 +48,10 @@ export async function refreshTaskStatuses(db: Db) {
     }
 
     if (nextStatus) {
-      await db.update(task).set({ status: nextStatus }).where(eq(task.id, t.id));
+      await db
+        .update(task)
+        .set({ status: nextStatus })
+        .where(eq(task.id, t.id));
       changed++;
     }
   }
@@ -64,7 +69,11 @@ export async function completeTask(
   if (rows.length === 0) throw new Error(`task ${taskId} 不存在`);
 
   const current = rows[0];
-  if (!COMPLETABLE_STATUSES.includes(current.status as (typeof COMPLETABLE_STATUSES)[number])) {
+  if (
+    !COMPLETABLE_STATUSES.includes(
+      current.status as (typeof COMPLETABLE_STATUSES)[number],
+    )
+  ) {
     throw new Error(`task ${taskId} 当前状态为「${current.status}」，不可完成`);
   }
 
@@ -85,7 +94,13 @@ export async function completeTask(
   });
 
   // 类型相关的副作用（如 TELEX_* 完成 → 电放状态置真）
-  await applyCompletionSideEffects(db, current.taskType, current.contractItemId, completedDate);
+  await applyCompletionSideEffects(
+    db,
+    current.taskType,
+    current.contractId,
+    current.contractItemId,
+    completedDate,
+  );
 
   return updated;
 }
@@ -162,6 +177,7 @@ export async function updateCompletedAt(
 async function applyCompletionSideEffects(
   db: Db,
   taskType: string,
+  contractId: number,
   contractItemId: number | null,
   completedDate: string,
 ) {
@@ -192,6 +208,9 @@ async function applyCompletionSideEffects(
       oldValue: "进行中",
       newValue: "已完成",
     });
+
+    // 产品完结后，检查合同是否满足完结条件 → 生成 CONTRACT_COMPLETE_CONFIRM
+    await checkContractCompletion(db, contractId);
   } else if (taskType === "TELEX_OA") {
     // OA：仅电放置真，item 完结等收款
     await db

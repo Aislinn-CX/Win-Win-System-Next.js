@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
-import { contractItem, factoryDateChangeLog } from "../db";
 import type { Db } from "../db";
-import { logChange } from "./change-logger";
+import { contractItem, factoryDateChangeLog } from "../db";
+import type { ChangeEntry } from "./change-logger";
+import { logChange, logChanges } from "./change-logger";
 import { toISODate } from "./date-calculator";
 
 // ============================================================
@@ -86,8 +87,13 @@ export async function changeFactoryDate(
  */
 export async function setActualEtd(db: Db, itemId: number, etd: string) {
   const oldEtd = toISODate(
-    (await db.select().from(contractItem).where(eq(contractItem.id, itemId)).limit(1))[0]
-      ?.actualEtd,
+    (
+      await db
+        .select()
+        .from(contractItem)
+        .where(eq(contractItem.id, itemId))
+        .limit(1)
+    )[0]?.actualEtd,
   );
 
   const [updated] = await db
@@ -104,5 +110,117 @@ export async function setActualEtd(db: Db, itemId: number, etd: string) {
     newValue: etd,
   });
 
+  return updated;
+}
+
+// ============================================================
+// 纯记录字段更新（引擎规则不读取、不触发任务重算的字段）
+// 只做字段更新 + audit_log，无任何业务判断。
+// ============================================================
+
+export interface ItemRecordFieldsInput {
+  plannedEtd?: string | null;
+  bookingStatus?: string | null;
+  loadingDate?: string | null;
+  docsSentStatus?: boolean | null;
+  docsSentDate?: string | null;
+  expectedPaymentDate?: string | null;
+  factoryActualDoneDate?: string | null;
+  remark?: string | null;
+}
+
+function toLogValue(v: unknown): string | null {
+  if (v == null) return null;
+  if (typeof v === "boolean") return v ? "true" : "false";
+  return String(v);
+}
+
+/**
+ * 更新产品明细的纯记录字段。
+ * 未在 input 中出现的字段保持不动；未发生变化的字段不写 audit_log。
+ */
+export async function updateItemRecordFields(
+  db: Db,
+  itemId: number,
+  input: ItemRecordFieldsInput,
+) {
+  const [before] = await db
+    .select()
+    .from(contractItem)
+    .where(eq(contractItem.id, itemId))
+    .limit(1);
+  if (!before) throw new Error(`contract_item ${itemId} 不存在`);
+
+  const updates: Record<string, string | boolean | null> = {};
+  const changes: ChangeEntry[] = [];
+
+  function track(
+    column: string,
+    dbName: string,
+    newValue: string | boolean | null,
+    oldValue: unknown,
+  ) {
+    if (toLogValue(newValue) === toLogValue(oldValue)) return;
+    updates[column] = newValue;
+    changes.push({
+      entityType: "contract_item",
+      entityId: itemId,
+      fieldName: dbName,
+      oldValue: toLogValue(oldValue),
+      newValue: toLogValue(newValue),
+    });
+  }
+
+  if (input.plannedEtd !== undefined)
+    track("plannedEtd", "planned_etd", input.plannedEtd, before.plannedEtd);
+  if (input.bookingStatus !== undefined)
+    track(
+      "bookingStatus",
+      "booking_status",
+      input.bookingStatus,
+      before.bookingStatus,
+    );
+  if (input.loadingDate !== undefined)
+    track("loadingDate", "loading_date", input.loadingDate, before.loadingDate);
+  if (input.docsSentStatus !== undefined)
+    track(
+      "docsSentStatus",
+      "docs_sent_status",
+      input.docsSentStatus,
+      before.docsSentStatus,
+    );
+  if (input.docsSentDate !== undefined)
+    track(
+      "docsSentDate",
+      "docs_sent_date",
+      input.docsSentDate,
+      before.docsSentDate,
+    );
+  if (input.expectedPaymentDate !== undefined)
+    track(
+      "expectedPaymentDate",
+      "expected_payment_date",
+      input.expectedPaymentDate,
+      before.expectedPaymentDate,
+    );
+  if (input.factoryActualDoneDate !== undefined)
+    track(
+      "factoryActualDoneDate",
+      "factory_actual_done_date",
+      input.factoryActualDoneDate,
+      before.factoryActualDoneDate,
+    );
+  if (input.remark !== undefined)
+    track("remark", "remark", input.remark, before.remark);
+
+  if (Object.keys(updates).length === 0) return before;
+
+  const [updated] = await db
+    .update(contractItem)
+    .set(updates as Partial<typeof contractItem.$inferInsert>)
+    .where(eq(contractItem.id, itemId))
+    .returning();
+
+  await logChanges(db, changes);
   return updated;
 }

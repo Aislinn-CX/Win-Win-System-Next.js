@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
-import { contract, contractItem, task } from "../db";
 import type { Db } from "../db";
+import { contract, contractItem, quoteItem, task } from "../db";
 
 // ============================================================
 // State Reader — 状态读取器（SDD 3.2）
@@ -32,10 +32,7 @@ export async function readItemWithContract(db: Db, contractItemId: number) {
 
 /** 读取某产品的全部任务（含终态，用于完整跟单轨迹） */
 export async function readItemTasks(db: Db, contractItemId: number) {
-  return db
-    .select()
-    .from(task)
-    .where(eq(task.contractItemId, contractItemId));
+  return db.select().from(task).where(eq(task.contractItemId, contractItemId));
 }
 
 /** 读取合同下全部产品明细 */
@@ -44,4 +41,14 @@ export async function readContractItems(db: Db, contractId: number) {
     .select()
     .from(contractItem)
     .where(eq(contractItem.contractId, contractId));
+}
+
+/** 读取全部合同产品明细（历史合同检索源，纯读，不做匹配/排除） */
+export async function readAllContractItems(db: Db) {
+  return db.select().from(contractItem);
+}
+
+/** 读取全部报价产品明细（历史报价检索源，纯读，不做匹配/排除） */
+export async function readAllQuoteItems(db: Db) {
+  return db.select().from(quoteItem);
 }

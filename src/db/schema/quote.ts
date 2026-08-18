@@ -102,6 +102,12 @@ export const quoteImageCandidate = pgTable("quote_image_candidate", {
 
   source: varchar("source", { length: 200 }).notNull(),
 
+  /**
+   * 来源实体 id（多态引用，无 FK）：
+   * source = "历史报价" → quote_item.id；source = "历史合同" → contract_item.id
+   */
+  sourceEntityId: integer("source_entity_id"),
+
   confirmStatus: varchar("confirm_status", { length: 10 })
     .$type<ConfirmStatus>()
     .notNull()

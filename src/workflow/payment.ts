@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
-import { contract, contractItem } from "../db";
 import type { Db } from "../db";
+import { contract, contractItem } from "../db";
 import { logChange } from "./change-logger";
+import { checkContractCompletion } from "./completion";
 import { recomputeItemReminders } from "./engine";
 
 // ============================================================
@@ -20,7 +21,8 @@ async function resolvePaymentType(db: Db, contractItemId: number) {
     .from(contractItem)
     .where(eq(contractItem.id, contractItemId))
     .limit(1);
-  if (item.length === 0) throw new Error(`contract_item ${contractItemId} 不存在`);
+  if (item.length === 0)
+    throw new Error(`contract_item ${contractItemId} 不存在`);
 
   const c = await db
     .select()
@@ -92,6 +94,9 @@ export async function recordOaPayment(
       oldValue: "进行中",
       newValue: "已完成",
     });
+
+    // 产品完结后，检查合同是否满足完结条件 → 生成 CONTRACT_COMPLETE_CONFIRM
+    await checkContractCompletion(db, updated.contractId);
   }
 
   return { itemStatus: updated.telexReleaseStatus ? "已完成" : "进行中" };
